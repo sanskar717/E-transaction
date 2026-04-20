@@ -78,8 +78,8 @@ contract TransactionTracker is ReentrancyGuard, Ownable, Pausable {
     //  constructor  //
     ///////////////////
 
-    constructor() Ownable(msg.sender) {
-        i_walletRegistry = new WalletRegistry();
+    constructor(address _walletRegistry) Ownable(msg.sender) {
+        i_walletRegistry = WalletRegistry(_walletRegistry);
     }
 
     ////////////////////////
@@ -95,37 +95,41 @@ contract TransactionTracker is ReentrancyGuard, Ownable, Pausable {
         moreThanZero
     {
         if (_to == address(0)) revert TransactionTracker__ZeroAmount();
-        if(_to == msg.sender) revert TransactionTracker__SameAddress();
+        if (_to == msg.sender) revert TransactionTracker__SameAddress();
 
-        s_transactions[msg.sender].push(Transaction({
-            from: msg.sender,
-            to: _to,
-            amount: msg.value,
-            gasPrice: _gasPrice,
-            gasLimit: _gasLimit,
-            timeStamp: block.timestamp,
-            txType: TxType.SENT
-        }));
-
-        if(i_walletRegistry.isWalletRegistered(_to)){
-            s_transactions[_to].push(Transaction({
+        s_transactions[msg.sender].push(
+            Transaction({
                 from: msg.sender,
                 to: _to,
                 amount: msg.value,
                 gasPrice: _gasPrice,
                 gasLimit: _gasLimit,
                 timeStamp: block.timestamp,
-                txType: TxType.RECEIVED 
-            }));
+                txType: TxType.SENT
+            })
+        );
+
+        if (i_walletRegistry.isWalletRegistered(_to)) {
+            s_transactions[_to].push(
+                Transaction({
+                    from: msg.sender,
+                    to: _to,
+                    amount: msg.value,
+                    gasPrice: _gasPrice,
+                    gasLimit: _gasLimit,
+                    timeStamp: block.timestamp,
+                    txType: TxType.RECEIVED
+                })
+            );
             s_totalEthReceived[_to] += msg.value;
             s_totalTxCount[_to]++;
         }
 
         s_totalEthSent[msg.sender] += msg.value;
         s_totalTxCount[msg.sender]++;
-        
-        (bool success, ) = _to.call{value: msg.value}("");
-        if(!success) revert TransactionTracker__TransferFailed();
+
+        (bool success,) = _to.call{value: msg.value}("");
+        if (!success) revert TransactionTracker__TransferFailed();
 
         emit ethSent(msg.sender, _to, msg.value, _gasPrice, _gasLimit, block.timestamp);
         emit ethReceived(msg.sender, _to, msg.value, _gasPrice, _gasLimit, block.timestamp);
@@ -135,22 +139,57 @@ contract TransactionTracker is ReentrancyGuard, Ownable, Pausable {
     //  Owner Functions  //
     ///////////////////////
 
-    function pauseContract() external onlyOwner(){
+    function pauseContract() external onlyOwner {
         _pause();
     }
-    
-    function UnpausedContract() external onlyOwner(){
+
+    function UnpausedContract() external onlyOwner {
         _unpause();
     }
-    
+
     //////////////////////
     //  View Functions  //
     //////////////////////
-    
-    function getTransactions(address _wallet) external view returns(Transaction[] memory){
+
+    function getTransactions(address _wallet) external view returns (Transaction[] memory) {
         return s_transactions[_wallet];
     }
 
-    function
+    function getMonthlyTransactions(address _wallet, uint256 _monthStart, uint256 _monthEnd)
+        external
+        view
+        returns (Transaction[] memory)
+    {
+        Transaction[] memory allTxs = s_transactions[_wallet];
+        uint256 count = 0;
 
+        for (uint256 i = 0; i < allTxs.length; i++) {
+            if (allTxs[i].timeStamp >= _monthStart && allTxs[i].timeStamp <= _monthEnd) {
+                count++;
+            }
+        }
+
+        Transaction[] memory monthlyTxs = new Transaction[](count);
+        uint256 index = 0;
+
+        for (uint256 i = 0; i < allTxs.length; i++) {
+            if (allTxs[i].timeStamp >= _monthStart && allTxs[i].timeStamp <= _monthEnd) {
+                monthlyTxs[index] = allTxs[i];
+                index++;
+            }
+        }
+        return monthlyTxs;
+    }
+
+    function getWalletStats(address _wallet)
+        external
+        view
+        returns (uint256 totalTx, uint256 totalSent, uint256 totalReceived)
+    {
+        return (s_totalTxCount[_wallet], s_totalEthSent[_wallet], s_totalEthReceived[_wallet]);
+    }
+
+    function getRegistryAddress() external view returns (address) {
+        return address(i_walletRegistry);
+    }
 }

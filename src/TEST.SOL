@@ -1,0 +1,264 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {WalletRegistry} from "./WalletRegistry.sol";
+
+/**
+ * @title TransactionTracker
+ * @author Sanskar Gupta
+ * @notice Registered wallets ki ETH transactions track karta hai
+ * @dev Rindexer in events ko capture karega for frontend display
+ */
+contract TransactionTracker is ReentrancyGuard, Ownable, Pausable {
+
+    ////////////
+    // Errors //
+    ////////////
+
+    error TransactionTracker__WalletNotRegistered();
+    error TransactionTracker__ZeroAmount();
+    error TransactionTracker__TransferFailed();
+    error TransactionTracker__SameAddress();
+
+    ///////////
+    // Types //
+    ///////////
+
+    // Har ek transaction ka record
+    struct Transaction {
+        address from;
+        address to;
+        uint256 amount;       // ETH amount in wei
+        uint256 gasPrice;     // wei per gas unit
+        uint256 gasLimit;     // kitna gas diya tha
+        uint256 timestamp;    // kab hua
+        TxType txType;        // sent ya received
+    }
+
+    // Transaction type — sent ya received
+    enum TxType { SENT, RECEIVED }
+
+    /////////////////////
+    // State Variables //
+    /////////////////////
+
+    // WalletRegistry contract ka reference — registered check ke liye
+    WalletRegistry private immutable i_walletRegistry;
+
+    // Har wallet ki saari transactions
+    mapping(address => Transaction[]) private s_transactions;
+
+    // Har wallet ka total transaction count
+    mapping(address => uint256) private s_totalTxCount;
+
+    // Har wallet ka total ETH sent (wei mein)
+    mapping(address => uint256) private s_totalEthSent;
+
+    // Har wallet ka total ETH received (wei mein)
+    mapping(address => uint256) private s_totalEthReceived;
+
+    ////////////
+    // Events //
+    ////////////
+
+    // Rindexer in events ko track karega — gas fees bhi capture hoti hain yahan se
+    event EthSent(
+        address indexed from,
+        address indexed to,
+        uint256 amount,
+        uint256 gasPrice,
+        uint256 gasLimit,
+        uint256 timestamp
+    );
+
+    event EthReceived(
+        address indexed from,
+        address indexed to,
+        uint256 amount,
+        uint256 gasPrice,
+        uint256 gasLimit,
+        uint256 timestamp
+    );
+
+    ///////////////
+    // Modifiers //
+    ///////////////
+
+    // Sirf registered wallets use kar sakte hain
+    modifier onlyRegistered() {
+        if (!i_walletRegistry.isWalletRegistered(msg.sender)) {
+            revert TransactionTracker__WalletNotRegistered();
+        }
+        _;
+    }
+
+    // Zero ETH transactions allow nahi
+    modifier moreThanZero() {
+        if (msg.value == 0) {
+            revert TransactionTracker__ZeroAmount();
+        }
+        _;
+    }
+
+    ///////////////
+    // Functions //
+    ///////////////
+
+    constructor(address _walletRegistry) Ownable(msg.sender) {
+        i_walletRegistry = WalletRegistry(_walletRegistry);
+    }
+
+    ////////////////////////
+    // External Functions //
+    ////////////////////////
+
+    /**
+     * @notice ETH kisi aur ko bhejo — transaction record hogi
+     * @dev gasPrice aur gasLimit frontend se pass hoga for display
+     * @param _to Jise ETH bhejna hai
+     * @param _gasPrice Current gas price (wei mein)
+     * @param _gasLimit Gas limit jo set ki thi
+     */
+    function sendEth(
+        address payable _to,
+        uint256 _gasPrice,
+        uint256 _gasLimit
+    )
+        external
+        payable
+        nonReentrant
+        whenNotPaused
+        onlyRegistered
+        moreThanZero
+    {
+        if (_to == address(0)) revert TransactionTracker__ZeroAmount();
+        if (_to == msg.sender) revert TransactionTracker__SameAddress();
+
+        // Sender ki transaction record karo
+        s_transactions[msg.sender].push(Transaction({
+            from: msg.sender,
+            to: _to,
+            amount: msg.value,
+            gasPrice: _gasPrice,
+            gasLimit: _gasLimit,
+            timestamp: block.timestamp,
+            txType: TxType.SENT
+        }));
+
+        // Agar receiver bhi registered hai toh uski bhi record karo
+        if (i_walletRegistry.isWalletRegistered(_to)) {
+            s_transactions[_to].push(Transaction({
+                from: msg.sender,
+                to: _to,
+                amount: msg.value,
+                gasPrice: _gasPrice,
+                gasLimit: _gasLimit,
+                timestamp: block.timestamp,
+                txType: TxType.RECEIVED
+            }));
+            s_totalEthReceived[_to] += msg.value;
+            s_totalTxCount[_to]++;
+        }
+
+        // Stats update karo sender ke liye
+        s_totalEthSent[msg.sender] += msg.value;
+        s_totalTxCount[msg.sender]++;
+
+        // ETH transfer karo
+        (bool success,) = _to.call{value: msg.value}("");
+        if (!success) revert TransactionTracker__TransferFailed();
+
+        // Events emit karo — Rindexer yahan se sab capture karega
+        emit EthSent(msg.sender, _to, msg.value, _gasPrice, _gasLimit, block.timestamp);
+        emit EthReceived(msg.sender, _to, msg.value, _gasPrice, _gasLimit, block.timestamp);
+    }
+
+    //////////////////////////////
+    // Owner Functions          //
+    //////////////////////////////
+
+    function pauseContract() external onlyOwner { _pause(); }
+    function unpauseContract() external onlyOwner { _unpause(); }
+
+    //////////////////////////////
+    // View Functions           //
+    //////////////////////////////
+
+    /**
+     * @notice Wallet ki saari transactions dekho
+     */
+    function getTransactions(address _wallet)
+        external
+        view
+        returns (Transaction[] memory)
+    {
+        return s_transactions[_wallet];
+    }
+
+    /**
+     * @notice Monthly transactions filter karo — frontend gas fees calculate karega
+     * @param _wallet Jis wallet ki transactions chahiye
+     * @param _monthStart Us month ka start timestamp
+     * @param _monthEnd Us month ka end timestamp
+     */
+    function getMonthlyTransactions(
+        address _wallet,
+        uint256 _monthStart,
+        uint256 _monthEnd
+    )
+        external
+        view
+        returns (Transaction[] memory)
+    {
+        Transaction[] memory allTxs = s_transactions[_wallet];
+        uint256 count = 0;
+
+        // Pehle count karo kitni transactions is month mein hain
+        for (uint256 i = 0; i < allTxs.length; i++) {
+            if (allTxs[i].timestamp >= _monthStart && allTxs[i].timestamp <= _monthEnd) {
+                count++;
+            }
+        }
+
+        // Filter karke return karo
+        Transaction[] memory monthlyTxs = new Transaction[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < allTxs.length; i++) {
+            if (allTxs[i].timestamp >= _monthStart && allTxs[i].timestamp <= _monthEnd) {
+                monthlyTxs[index] = allTxs[i];
+                index++;
+            }
+        }
+
+        return monthlyTxs;
+    }
+
+    /**
+     * @notice Total transaction count, ETH sent aur received ek saath
+     */
+    function getWalletStats(address _wallet)
+        external
+        view
+        returns (
+            uint256 totalTx,
+            uint256 totalSent,
+            uint256 totalReceived
+        )
+    {
+        return (
+            s_totalTxCount[_wallet],
+            s_totalEthSent[_wallet],
+            s_totalEthReceived[_wallet]
+        );
+    }
+
+    /**
+     * @notice WalletRegistry contract ka address
+     */
+    function getRegistryAddress() external view returns (address) {
+        return address(i_walletRegistry);
+    }
+}
