@@ -130,6 +130,19 @@ contract WalletRegistry is ReentrancyGuard, Ownable, Pausable {
     }
 
     //////////////////////
+    // Pause Functions  //
+    //////////////////////
+
+    function pauseContract() external onlyOwner {
+        _pause();
+        emit ContractPaused("Contract Paused");
+    }
+
+    function unpauseContract() external onlyOwner {
+        _unpause();
+    }
+
+    //////////////////////
     //  View Functions  //
     //////////////////////
 
