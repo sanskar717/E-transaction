@@ -38,8 +38,8 @@ contract WalletRegistry is ReentrancyGuard, Ownable, Pausable {
     //  events  //
     //////////////
 
-    event WalletRegistered(address indexed wallet, string userName, uint256 timetSamp);
-    event WalletRemoved(address indexed wallet, uint256 timetSamp);
+    event WalletRegistered(address indexed wallet, string userName, uint256 timeStamp);
+    event WalletRemoved(address indexed wallet, uint256 timeStamp);
     event UserNameUpdated(address indexed wallet, string oldUserName, string newUserName);
     event ContractPaused(string reason);
 
