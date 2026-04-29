@@ -35,7 +35,7 @@ contract TransactionTrackerTest is Test {
     //  Events  //
     //////////////
 
-     event ethSent(
+    event ethSent(
         address indexed from, address indexed to, uint256 amount, uint256 gasPrice, uint256 gasLimit, uint256 timeStamp
     );
     event ethReceived(
@@ -158,18 +158,18 @@ contract TransactionTrackerTest is Test {
         vm.deal(unregistered, STARTING_BALANCE);
         vm.expectRevert(TransactionTracker.TransactionTracker__WalletNotRegistered.selector);
         tracker.sendEth{value: SEND_AMOUNT}(payable(user2), GAS_PRICE, GAS_LIMIT);
-    }   
+    }
 
     function test_SendEth_Revert_ZeroAmount() public {
         vm.prank(user1);
         vm.expectRevert(TransactionTracker.TransactionTracker__ZeroAmount.selector);
-        tracker.sendEth{value: 0} (payable(user2), GAS_PRICE, GAS_LIMIT);
+        tracker.sendEth{value: 0}(payable(user2), GAS_PRICE, GAS_LIMIT);
     }
 
     function test_SendEth_Revert_SameAddress() public {
         vm.prank(user1);
         vm.expectRevert(TransactionTracker.TransactionTracker__SameAddress.selector);
-        tracker.sendEth{value: SEND_AMOUNT} (payable(user1), GAS_PRICE, GAS_LIMIT);
+        tracker.sendEth{value: SEND_AMOUNT}(payable(user1), GAS_PRICE, GAS_LIMIT);
     }
 
     function test_SendEth_Revert_WhenPaused() public {
@@ -179,7 +179,7 @@ contract TransactionTrackerTest is Test {
         vm.prank(user1);
         vm.expectRevert();
 
-        tracker.sendEth{value: SEND_AMOUNT} (payable(user2), GAS_PRICE, GAS_LIMIT);
+        tracker.sendEth{value: SEND_AMOUNT}(payable(user2), GAS_PRICE, GAS_LIMIT);
     }
 
     ////////////////////////////////
@@ -198,10 +198,10 @@ contract TransactionTrackerTest is Test {
         assertEq(txs[0].amount, SEND_AMOUNT);
         assertEq(txs[0].gasPrice, GAS_PRICE);
         assertEq(txs[0].gasLimit, GAS_LIMIT);
-    } 
+    }
 
     function test_GetTransactions_EmptyIfNoTx() public view {
-        TransactionTracker.Transaction[] memory  txs = tracker.getTransactions(user1);
+        TransactionTracker.Transaction[] memory txs = tracker.getTransactions(user1);
         assertEq(txs.length, 0);
     }
 
@@ -233,5 +233,97 @@ contract TransactionTrackerTest is Test {
         TransactionTracker.Transaction[] memory monthlyTxs = tracker.getMonthlyTransactions(user1, monthStart, monthEnd);
 
         assertEq(monthlyTxs.length, 0);
+    }
+
+    ////////////////////////////////
+    //  getWalletStats Tests      //
+    ////////////////////////////////
+
+    function test_GetWalletStats_CorrectAfterMultipleTx() public {
+        vm.prank(user1);
+        tracker.sendEth{value: 1 ether}(payable(user2), GAS_PRICE, GAS_LIMIT);
+
+        vm.prank(user1);
+        tracker.sendEth{value: 2 ether}(payable(user2), GAS_PRICE, GAS_LIMIT);
+
+        (uint256 totaltx, uint256 totalSent,) = tracker.getWalletStats(user1);
+
+        assertEq(totaltx, 2);
+        assertEq(totalSent, 3 ether);
+    }
+
+    function test_GetWalletStats_ZeroForFreshWallet() public view {
+        (uint256 totaltx, uint256 totalSent, uint256 totalReceived) = tracker.getWalletStats(user1);
+
+        assertEq(totaltx, 0);
+        assertEq(totalSent, 0);
+        assertEq(totalReceived, 0);
+    }
+
+    ////////////////////////////////
+    //  Pause / Unpause Tests     //
+    ////////////////////////////////
+
+    function test_Pause_Success() public {
+        vm.prank(owner);
+        tracker.pauseContract();
+
+        assertTrue(tracker.paused());
+    }
+
+    function test_Unpause_Success() public {
+        vm.prank(owner);
+        tracker.pauseContract();
+
+        vm.prank(owner);
+        tracker.UnpausedContract();
+
+        assertFalse(tracker.paused());
+    }
+
+    function test_Pause_Revert_NotOwner() public {
+        vm.prank(user1);
+        vm.expectRevert();
+        tracker.pauseContract();
+    }
+
+    function test_Unpause_WorksAfterUnpause() public {
+        vm.prank(owner);
+        tracker.pauseContract();
+
+        vm.prank(owner);
+        tracker.UnpausedContract();
+
+        vm.prank(user1);
+        tracker.sendEth{value: SEND_AMOUNT}(payable(user2), GAS_PRICE, GAS_LIMIT);
+
+        (uint256 totaltx,,) = tracker.getWalletStats(user1);
+        assertEq(totaltx, 1);
+    }
+
+    ////////////////////////////////
+    //  Fuzz Tests                //
+    ////////////////////////////////
+
+    function testFuzz_SendEth_AnyValidAmount(uint256 amount) public {
+        vm.assume(amount > 0);
+        vm.assume(amount <= STARTING_BALANCE);
+
+        vm.prank(user1);
+        tracker.sendEth{value: amount}(payable(user2), GAS_PRICE, GAS_LIMIT);
+
+        (, uint256 totalSent,) = tracker.getWalletStats(user1);
+        assertEq(totalSent, amount);
+    }
+
+    function testFuzz_SendEth_AnyGasPrice(uint256 gasPrice) public {
+        vm.assume(gasPrice > 0);
+        vm.assume(gasPrice <= 1000 gwei);
+
+        vm.prank(user1);
+        tracker.sendEth{value: SEND_AMOUNT}(payable(user2), gasPrice, GAS_LIMIT);
+
+        TransactionTracker.Transaction[] memory txs = tracker.getTransactions(user1);
+        assertEq(txs[0].gasPrice, gasPrice);
     }
 }
