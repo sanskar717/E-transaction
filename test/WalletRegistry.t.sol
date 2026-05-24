@@ -29,6 +29,8 @@ contract WalletRegistryTest is Test {
     string constant LONG_USERNAME = "thisusernameiswaytoolongtobeallowed123";
     string constant EMPTY_USERNAME = "";
     string constant MAX_USERNAME = "abcdefghijklmnopqrstuvwxyz123456"; // 32 characters
+    bytes32 constant VALID_PIN_HASH = keccak256(abi.encodePacked("12345"));
+    bytes32 constant WRONG_PIN_HASH = keccak256(abi.encodePacked("99999"));
 
     //////////////
     //  Events  //
@@ -343,5 +345,120 @@ contract WalletRegistryTest is Test {
             )
         );
         registry.updateUserName(LONG_USERNAME);
+    }
+
+    ////////////////////////////////
+    //  setPin Tests              //
+    ////////////////////////////////
+
+    function test_SetPin_Success() public {
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+
+        vm.prank(user1);
+        registry.setPin(VALID_PIN_HASH);
+
+        assertTrue(registry.hasPinSet(user1));
+    }
+
+    function test_SetPin_VerifyPin_Correct() public {
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+
+        vm.prank(user1);
+        registry.setPin(VALID_PIN_HASH);
+
+        vm.prank(user1);
+        assertTrue(registry.verifyPin(VALID_PIN_HASH));
+    }
+
+    function test_SetPin_VerifyPin_WrongPin() public {
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+
+        vm.prank(user1);
+        registry.setPin(VALID_PIN_HASH);
+
+        vm.prank(user1);
+        assertFalse(registry.verifyPin(WRONG_PIN_HASH));
+    }
+
+    function test_SetPin_Revert_NotRegistered() public {
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(WalletRegistry.WalletRegistry__NotRegistered.selector, user1));
+        registry.setPin(VALID_PIN_HASH);
+    }
+
+    function test_SetPin_Revert_AlreadySet() public {
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+
+        vm.prank(user1);
+        registry.setPin(VALID_PIN_HASH);
+
+        vm.prank(user1);
+        vm.expectRevert(bytes("PIN already set"));
+        registry.setPin(VALID_PIN_HASH);
+    }
+
+    function test_SetPin_Revert_WhenPaused() public {
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+
+        vm.prank(owner);
+        registry.pauseContract();
+
+        vm.prank(user1);
+        vm.expectRevert();
+        registry.setPin(VALID_PIN_HASH);
+    }
+
+    function test_SetPin_MultipleUsers_Independent() public {
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+        vm.prank(user1);
+        registry.setPin(VALID_PIN_HASH);
+
+        vm.prank(user2);
+        registry.registerWallet(VALID_USERNAME_2);
+        vm.prank(user2);
+        registry.setPin(WRONG_PIN_HASH);
+
+        vm.prank(user1);
+        assertTrue(registry.verifyPin(VALID_PIN_HASH));
+
+        vm.prank(user2);
+        assertTrue(registry.verifyPin(WRONG_PIN_HASH));
+
+        vm.prank(user1);
+        assertFalse(registry.verifyPin(WRONG_PIN_HASH));
+    }
+
+    ////////////////////////////////
+    //  setPin Fuzz Tests         //
+    ////////////////////////////////
+
+    function testFuzz_SetPin_AnyHash(bytes32 randomPin) public {
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+
+        vm.prank(user1);
+        registry.setPin(randomPin);
+
+        vm.prank(user1);
+        assertTrue(registry.verifyPin(randomPin));
+    }
+
+    function testFuzz_SetPin_WrongHash(bytes32 correctPin, bytes32 wrongPin) public {
+        vm.assume(correctPin != wrongPin);
+
+        vm.prank(user1);
+        registry.registerWallet(VALID_USERNAME);
+
+        vm.prank(user1);
+        registry.setPin(correctPin);
+
+        vm.prank(user1);
+        assertFalse(registry.verifyPin(wrongPin));
     }
 }

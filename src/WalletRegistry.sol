@@ -30,6 +30,8 @@ contract WalletRegistry is ReentrancyGuard, Ownable, Pausable {
     //  state variables  //
     ///////////////////////
 
+    mapping(address => bytes32) private pinHashes;
+    mapping(address => bool) public hasPinSet;
     mapping(address => UserProfile) private s_userProfile;
     uint256 private s_totalRegistered;
     uint256 private constant MAX_USERNAME_LENGTH = 32;
@@ -129,6 +131,15 @@ contract WalletRegistry is ReentrancyGuard, Ownable, Pausable {
         emit UserNameUpdated(msg.sender, oldUserName, _newUserName);
     }
 
+    function setPin(bytes32 _pinHash) external whenNotPaused {
+        if (!s_userProfile[msg.sender].isActive) {
+            revert WalletRegistry__NotRegistered(msg.sender);
+        }
+        require(!hasPinSet[msg.sender], "PIN already set");
+        pinHashes[msg.sender] = _pinHash;
+        hasPinSet[msg.sender] = true;
+    }
+
     //////////////////////
     // Pause Functions  //
     //////////////////////
@@ -163,5 +174,9 @@ contract WalletRegistry is ReentrancyGuard, Ownable, Pausable {
 
     function isContractPaused() external view returns (bool) {
         return paused();
+    }
+
+    function verifyPin(bytes32 _pinHash) external view returns (bool) {
+        return pinHashes[msg.sender] == _pinHash;
     }
 }

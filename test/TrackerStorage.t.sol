@@ -282,6 +282,15 @@ contract TrackerStorageTest is Test {
     }
 
     ////////////////////////////////
+    //  MockV3Aggregator Tests    //
+    ////////////////////////////////
+
+    function test_MockPriceFeed_Description() public view {
+        string memory desc = mockPriceFeed.description();
+        assertEq(desc, "ETH / USD");
+    }
+
+    ////////////////////////////////
     //  getMonthlyStats Tests     //
     ////////////////////////////////
 
