@@ -30,9 +30,10 @@ contract MockV3Aggregator {
         return _description;
     }
 
-    function updateAnswe(int256 _newAnswer) external {
+    function updateAnswer(int256 _newAnswer) external {
         latestAnswer = _newAnswer;
         roundId++;
+        answeredInRound = roundId;
         updateAt = block.timestamp;
     }
 
@@ -40,8 +41,8 @@ contract MockV3Aggregator {
         updateAt = 0;
     }
 
-    function setInvalidRound() external {
-        answeredInRound = roundId + 1;
+    function setRoundMismatch(uint80 _newRoundId) external {
+        roundId = _newRoundId;
     }
 
     function setNegativePrice() external {
@@ -107,15 +108,144 @@ contract PriceConverterTest is Test {
 
     function setUp() public {
         mockFeed = new MockV3Aggregator(8, ETH_PRICE);
-        wrapper = new  PriceConverterWrapper();
+        wrapper = new PriceConverterWrapper();
     }
 
     ////////////////////////////////
     //  getEthUsdPrice Tests      //
     ////////////////////////////////
 
-    function test_GetEthUsdPrice_ReturnsCorrectPrice() public view{
+    function test_GetEthUsdPrice_ReturnsCorrectPrice() public view {
         uint256 price = wrapper.getEthUsdPrice(AggregatorV3Interface(address(mockFeed)));
         assertEq(price, 2000e18);
+    }
+
+    function test_GetEthUsdPrice_Revert_StalePrice() public {
+        mockFeed.setStale();
+        vm.expectRevert(PriceConverter.PriceConverter__StalePrice.selector);
+        wrapper.getEthUsdPrice(AggregatorV3Interface(address(mockFeed)));
+    }
+
+    function test_GetEthUsdPrice_Revert_StalePrice_Timeout() public {
+        vm.warp(block.timestamp + 4 hours);
+        vm.expectRevert(PriceConverter.PriceConverter__StalePrice.selector);
+        wrapper.getEthUsdPrice(AggregatorV3Interface(address(mockFeed)));
+    }
+
+    function test_GetEthUsdPrice_Revert_ZeroPrice() public {
+        mockFeed.setZeroPrice();
+        vm.expectRevert(PriceConverter.PriceConverter__InvalidPrice.selector);
+        wrapper.getEthUsdPrice(AggregatorV3Interface(address(mockFeed)));
+    }
+
+    function test_GetEthUsdPrice_Revert_NegativePrice() public {
+        mockFeed.setNegativePrice();
+        vm.expectRevert(PriceConverter.PriceConverter__InvalidPrice.selector);
+        wrapper.getEthUsdPrice(AggregatorV3Interface(address(mockFeed)));
+    }
+
+    function test_GetEthUsdPrice_Revert_InvalidRound() public {
+        // mockFeed.setInvalidRound();
+        mockFeed.setRoundMismatch(5);
+        vm.expectRevert(PriceConverter.PriceConverter__InvalidRound.selector);
+        wrapper.getEthUsdPrice(AggregatorV3Interface(address(mockFeed)));
+    }
+
+    ////////////////////////////////
+    //  weiToUsd Tests            //
+    ////////////////////////////////
+
+    function test_WeiToUsd_OneEther() public view {
+        uint256 usd = wrapper.weiToUsd(AggregatorV3Interface(address(mockFeed)), 1 ether);
+        assertEq(usd, 2000e18); // 1 ETH = $2000
+    }
+
+    function test_WeiToUsd_ZeroAmount() public view {
+        uint256 usd = wrapper.weiToUsd(AggregatorV3Interface(address(mockFeed)), 0);
+        assertEq(usd, 0);
+    }
+
+    function test_WeiToUsd_HalfEther() public view {
+        uint256 usd = wrapper.weiToUsd(AggregatorV3Interface(address(mockFeed)), 0.5 ether);
+        assertEq(usd, 1000e18);
+    }
+
+    ////////////////////////////////
+    //  calculateGasFeeWei Tests  //
+    ////////////////////////////////
+
+    function test_CalculateGasFeeWei_Correct() public view {
+        uint256 fee = wrapper.calculateGasFeeWei(GAS_USED, GAS_PRICE);
+        assertEq(fee, 420000000000000);
+    }
+
+    function test_CalculateGasFeeWei_ZeroGas() public view {
+        uint256 fee = wrapper.calculateGasFeeWei(0, GAS_PRICE);
+        assertEq(fee, 0);
+    }
+
+    ////////////////////////////////
+    //  calculateGasFeeUsd Tests  //
+    ////////////////////////////////
+
+    function test_CalculateGasFeeUsd_Correct() public view {
+        uint256 feeUsd = wrapper.calculateGasFeeUsd(GAS_USED, GAS_PRICE, AggregatorV3Interface(address(mockFeed)));
+        uint256 expectedWei = GAS_USED * GAS_PRICE; // 21000 * 20 gwei = 420000000000000 wei
+        uint256 expectedUsd = wrapper.weiToUsd(AggregatorV3Interface(address(mockFeed)), expectedWei);
+        assertEq(feeUsd, expectedUsd);
+    }
+
+    ////////////////////////////////
+    //  usdToWei Tests            //
+    ////////////////////////////////
+
+    function test_UsdToWei_Correct() public view {
+        uint256 wei_ = wrapper.usdToWei(2000e18, AggregatorV3Interface(address(mockFeed)));
+        assertEq(wei_, 1 ether);
+    }
+
+    ////////////////////////////////
+    //  getPriceFeedDecimals      //
+    ////////////////////////////////
+
+    function test_GetPriceFeedDecimals_ReturnsCorrect() public view {
+        uint8 dec = wrapper.getPriceFeedDecimals(AggregatorV3Interface(address(mockFeed)));
+        assertEq(dec, 8);
+    }
+
+    ////////////////////////////////
+    //  getPriceFeedDescription   //
+    ////////////////////////////////
+
+    function test_GetPriceFeedDescription_ReturnsCorrect() public view {
+        string memory desc = wrapper.getPriceFeedDescription(AggregatorV3Interface(address(mockFeed)));
+        assertEq(desc, "ETH / USD");
+    }
+
+    ////////////////////////////////
+    //  Price Update Tests        //
+    ////////////////////////////////
+
+    function test_UpdateAnswer_ReflectsNewPrice() public {
+        mockFeed.updateAnswer(3000e8);
+        uint256 price = wrapper.getEthUsdPrice(AggregatorV3Interface(address(mockFeed)));
+        assertEq(price, 3000e18);
+    }
+
+    ////////////////////////////////
+    //  Fuzz Tests                //
+    ////////////////////////////////
+
+    function testFuzz_WeiToUsd_AnyAmount(uint256 amount) public view {
+        vm.assume(amount < 1_000_000 ether);
+        uint256 usd = wrapper.weiToUsd(AggregatorV3Interface(address(mockFeed)), amount);
+        assertEq(usd, (amount * 2000e18) / 1e18);
+    }
+
+    function testFuzz_CalculateGasFeeWei(uint256 gasUsed, uint256 gasPrice) public view {
+        vm.assume(gasUsed < 1_000_000);
+        vm.assume(gasPrice < 1000 gwei);
+        uint256 fee = wrapper.calculateGasFeeWei(gasUsed, gasPrice);
+        assertEq(fee, gasUsed * gasPrice);
     }
 }
