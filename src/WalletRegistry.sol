@@ -104,6 +104,7 @@ contract WalletRegistry is ReentrancyGuard, Ownable, Pausable {
         }
 
         s_userProfile[msg.sender].isActive = false;
+        hasPinSet[msg.sender] = false;
         s_totalRegistered--;
 
         emit WalletRemoved(msg.sender, block.timestamp);
